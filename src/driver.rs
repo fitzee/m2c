@@ -70,6 +70,8 @@ pub struct CompileOptions {
     pub out_dir: Option<PathBuf>,
     /// Explicit target triple override (e.g. "x86_64-linux")
     pub target_triple: Option<String>,
+    /// Platform override (e.g. "esp-idf"). Default: host.
+    pub platform: Option<String>,
     /// Compile with AddressSanitizer + UndefinedBehaviorSanitizer
     pub sanitize: bool,
     /// Project source directories — warnings from files under these paths are
@@ -105,6 +107,7 @@ impl Default for CompileOptions {
             emit_per_module: false,
             out_dir: None,
             target_triple: None,
+            platform: None,
             sanitize: false,
             project_paths: Vec::new(),
         }
@@ -673,9 +676,20 @@ fn ast_imports_to_hir(imports: &[crate::ast::Import]) -> Vec<crate::hir::HirImpo
 
 pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // ── Target detection ───────────────────────────────────────────
-    let target = match &opts.target_triple {
-        Some(triple) => crate::target::TargetInfo::from_triple(triple)?,
-        None => crate::target::TargetInfo::from_host(),
+    let target = if let Some(ref plat_name) = opts.platform {
+        match crate::platform::Platform::from_str(plat_name) {
+            Some(p) => crate::target::TargetInfo::from_platform(p),
+            None => {
+                return Err(CompileError::driver(
+                    format!("unknown platform '{}'. supported: host, esp-idf", plat_name),
+                ));
+            }
+        }
+    } else {
+        match &opts.target_triple {
+            Some(triple) => crate::target::TargetInfo::from_triple(triple)?,
+            None => crate::target::TargetInfo::from_host(),
+        }
     };
 
     let source = fs::read_to_string(&opts.input).map_err(|e| {
@@ -1501,6 +1515,37 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
     if opts.emit_per_module {
         return write_per_module_files(&c_code, opts);
+    }
+
+    // Target backend handles build output (e.g. ESP-IDF project generation).
+    // Returns None for host (fall through to cc compilation).
+    if !opts.emit_c {
+        let stem = opts.input.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("mx_program")
+            .to_lowercase();
+        let out_dir = opts.out_dir.clone()
+            .unwrap_or_else(|| opts.input.parent().unwrap_or(Path::new(".")).to_path_buf());
+        let input_dir = opts.input.parent().unwrap_or(Path::new("."));
+        let extra_c: Vec<PathBuf> = opts.extra_c_files.iter()
+            .map(|f| {
+                let p = PathBuf::from(f);
+                if p.is_absolute() { p } else { input_dir.join(&p) }
+            })
+            .collect();
+
+        let backend = crate::targets::backend_for(&target.platform.platform);
+        let build_opts = crate::targets::BuildOutputOpts {
+            input_path: &opts.input,
+            stem: &stem,
+            out_dir: &out_dir,
+            extra_c_files: &extra_c,
+            verbose: opts.verbose,
+        };
+        if let Some(result) = backend.write_build_output(&c_code, &build_opts) {
+            result?;
+            return Ok(());
+        }
     }
 
     if opts.emit_c {

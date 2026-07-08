@@ -10,6 +10,7 @@
 use std::fmt;
 
 use crate::errors::{CompileError, CompileResult};
+use crate::platform::{Platform, PlatformProfile};
 use crate::types::{TypeId, TypeRegistry, Type,
     TY_INTEGER, TY_CARDINAL, TY_REAL, TY_LONGREAL, TY_BOOLEAN, TY_CHAR,
     TY_BITSET, TY_WORD, TY_BYTE, TY_ADDRESS, TY_LONGINT, TY_LONGCARD,
@@ -22,12 +23,15 @@ use crate::types::{TypeId, TypeRegistry, Type,
 pub enum Arch {
     X86_64,
     Aarch64,
+    Xtensa,     // ESP32, ESP32-S2/S3
+    RiscV32,    // ESP32-C3/C6
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
     Linux,
     Darwin,
+    None,       // Bare-metal / RTOS (ESP-IDF, Zephyr, etc.)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +84,19 @@ impl IntLayout {
             bitset_bytes: 4,
         }
     }
+
+    /// ILP32 layout for 32-bit embedded targets (ESP32, ARM Cortex-M, etc.).
+    pub fn ilp32() -> Self {
+        Self {
+            integer_bytes: 4,
+            cardinal_bytes: 4,
+            longint_bytes: 8,
+            longcard_bytes: 8,
+            real_bytes: 4,
+            longreal_bytes: 8,
+            bitset_bytes: 4,
+        }
+    }
 }
 
 // ── AlignmentInfo ──────────────────────────────────────────────────
@@ -122,6 +139,21 @@ impl AlignmentInfo {
             struct_min_align: 1,
         }
     }
+
+    /// ILP32 alignment for 32-bit embedded targets.
+    pub fn ilp32() -> Self {
+        Self {
+            pointer_align: 4,
+            char_align: 1,
+            short_align: 2,
+            int_align: 4,
+            long_align: 4,
+            float_align: 4,
+            double_align: 8,
+            max_align: 8,
+            struct_min_align: 1,
+        }
+    }
 }
 
 // ── TargetInfo ─────────────────────────────────────────────────────
@@ -150,6 +182,8 @@ pub struct TargetInfo {
     pub alignments: AlignmentInfo,
     /// Whether the target supports setjmp/longjmp (true for all POSIX targets)
     pub supports_setjmp: bool,
+    /// Platform profile (runtime capabilities, I/O model, entry point).
+    pub platform: PlatformProfile,
 }
 
 impl TargetInfo {
@@ -203,23 +237,44 @@ impl TargetInfo {
         Ok(Self::build(arch, os, &canonical))
     }
 
-    /// Internal constructor — all fields derived from arch + os.
+    /// Construct a target for a specific platform profile.
+    pub fn from_platform(platform: Platform) -> Self {
+        let profile = PlatformProfile::from_platform(platform);
+        match platform {
+            Platform::Host => Self::from_host(),
+            Platform::EspIdf => Self {
+                triple: "xtensa-esp32-elf".to_string(),
+                arch: Arch::Xtensa,
+                os: Os::None,
+                pointer_bits: 32,
+                endian: Endianness::Little,
+                c_abi: CAbi::SysV,
+                int_layout: IntLayout::ilp32(),
+                alignments: AlignmentInfo::ilp32(),
+                supports_setjmp: true,
+                platform: profile,
+            },
+        }
+    }
+
+    /// Internal constructor — all fields derived from arch + os (desktop only).
     fn build(arch: Arch, os: Os, triple: &str) -> Self {
         let c_abi = match os {
             Os::Darwin => CAbi::Darwin,
-            Os::Linux => CAbi::SysV,
+            Os::Linux | Os::None => CAbi::SysV,
         };
 
         Self {
             triple: triple.to_string(),
             arch,
             os,
-            pointer_bits: 64,  // all supported targets are 64-bit
+            pointer_bits: 64,  // all supported desktop targets are 64-bit
             endian: Endianness::Little,  // all supported targets are LE
             c_abi,
             int_layout: IntLayout::lp64(),
             alignments: AlignmentInfo::lp64(),
             supports_setjmp: true,  // all POSIX targets
+            platform: PlatformProfile::host(),
         }
     }
 
@@ -246,6 +301,7 @@ impl TargetInfo {
         match self.os {
             Os::Linux => vec!["-D_GNU_SOURCE"],
             Os::Darwin => vec![],
+            Os::None => vec![],  // embedded: no default flags, toolchain provides them
         }
     }
 
@@ -254,6 +310,7 @@ impl TargetInfo {
         match self.os {
             Os::Linux => vec!["-Wl,--gc-sections", "-lpthread"],
             Os::Darwin => vec!["-Wl,-dead_strip"],
+            Os::None => vec![],  // embedded: no default link flags
         }
     }
 
@@ -274,6 +331,7 @@ impl TargetInfo {
             (Arch::X86_64,  Os::Darwin) => "x86_64-apple-macosx14.0.0".to_string(),
             (Arch::X86_64,  Os::Linux)  => "x86_64-unknown-linux-gnu".to_string(),
             (Arch::Aarch64, Os::Linux)  => "aarch64-unknown-linux-gnu".to_string(),
+            _ => self.triple.clone(), // embedded: use stored triple
         }
     }
 
@@ -288,6 +346,7 @@ impl TargetInfo {
                 "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".to_string(),
             (Arch::Aarch64, Os::Linux) =>
                 "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128".to_string(),
+            _ => "e-m:e-p:32:32-i64:64-n32-S128".to_string(), // generic 32-bit LE
         }
     }
 
@@ -296,6 +355,7 @@ impl TargetInfo {
         match self.os {
             Os::Darwin => vec!["-Wl,-dead_strip"],
             Os::Linux => vec!["-Wl,--gc-sections"],
+            Os::None => vec![],
         }
     }
 
@@ -591,6 +651,8 @@ impl fmt::Display for Arch {
         match self {
             Arch::X86_64 => write!(f, "x86_64"),
             Arch::Aarch64 => write!(f, "aarch64"),
+            Arch::Xtensa => write!(f, "xtensa"),
+            Arch::RiscV32 => write!(f, "riscv32"),
         }
     }
 }
@@ -600,6 +662,7 @@ impl fmt::Display for Os {
         match self {
             Os::Linux => write!(f, "linux"),
             Os::Darwin => write!(f, "darwin"),
+            Os::None => write!(f, "none"),
         }
     }
 }
@@ -653,6 +716,9 @@ fn canonical_triple(arch: Arch, os: Os) -> String {
         (Arch::X86_64,  Os::Darwin) => "x86_64-apple-darwin".to_string(),
         (Arch::X86_64,  Os::Linux)  => "x86_64-unknown-linux-gnu".to_string(),
         (Arch::Aarch64, Os::Linux)  => "aarch64-unknown-linux-gnu".to_string(),
+        (Arch::Xtensa,  Os::None)   => "xtensa-esp32-elf".to_string(),
+        (Arch::RiscV32, Os::None)   => "riscv32-esp-elf".to_string(),
+        _ => format!("{}-unknown-none", arch),
     }
 }
 

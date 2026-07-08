@@ -11,11 +11,13 @@ mod driver;
 mod hir;
 mod hir_build;
 mod errors;
+mod targets;
 mod json;
 mod lang_docs;
 mod lexer;
 mod lsp;
 mod parser;
+mod platform;
 mod project_resolver;
 mod sema;
 mod stdlib;
@@ -72,6 +74,7 @@ fn main() {
         eprintln!("  -l <lib>       Link with library");
         eprintln!("  -L <path>      Add library search path");
         eprintln!("  --target <triple>  Set target (e.g. x86_64-linux, aarch64-darwin)");
+        eprintln!("  --platform <name>  Set platform (host, esp-idf)");
         eprintln!("  --cflag <arg>  Pass flag to C compiler");
         eprintln!("  file.c/.o/.a   Extra C/object/archive files to link");
         eprintln!();
@@ -297,6 +300,14 @@ fn main() {
                 }
                 opts.target_triple = Some(args[i].clone());
             }
+            "--platform" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("{}: --platform requires an argument", COMPILER_NAME);
+                    process::exit(1);
+                }
+                opts.platform = Some(args[i].clone());
+            }
             "--emit-per-module" => {
                 opts.emit_per_module = true;
                 opts.emit_c = true;  // per-module implies emit-c (no linking by driver)
@@ -492,6 +503,7 @@ fn run_subcommand(args: &[String]) {
     let mut run_args: Vec<String> = Vec::new();
     let mut saw_dashdash = false;
     let mut target_triple: Option<String> = None;
+    let mut platform_name: Option<String> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -530,6 +542,14 @@ fn run_subcommand(args: &[String]) {
                     process::exit(1);
                 }
                 target_triple = Some(args[i].clone());
+            }
+            "--platform" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("{}: --platform requires an argument", COMPILER_NAME);
+                    process::exit(1);
+                }
+                platform_name = Some(args[i].clone());
             }
             arg if arg.starts_with('-') => {
                 eprintln!("{} {}: unknown option '{}'", COMPILER_NAME, subcmd, arg);
@@ -598,6 +618,7 @@ fn run_subcommand(args: &[String]) {
             feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
             backend: None,
+            platform: ctx.manifest.platform.clone(),
         };
         m
     } else {
@@ -626,6 +647,7 @@ fn run_subcommand(args: &[String]) {
             feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
             backend: None,
+            platform: ctx.manifest.platform.clone(),
         }
     };
 
@@ -644,11 +666,16 @@ fn run_subcommand(args: &[String]) {
         use_llvm: use_llvm || manifest_llvm,
         sanitize,
         target_triple,
+        platform: platform_name.or(ctx.manifest.platform.clone()),
     };
 
     match build::build_project(&config, is_run, &run_args) {
         Ok(result) => {
-            if !is_run && !result.up_to_date {
+            let is_embedded = config.platform.as_ref()
+                .and_then(|s| crate::platform::Platform::from_str(s))
+                .map(|p| crate::platform::PlatformProfile::from_platform(p).is_embedded())
+                .unwrap_or(false);
+            if !is_run && !result.up_to_date && !is_embedded {
                 eprintln!("{}: built {}", COMPILER_NAME, result.artifact.display());
             }
         }

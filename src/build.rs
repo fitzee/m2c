@@ -143,6 +143,7 @@ pub struct BuildConfig {
     pub use_llvm: bool,
     pub sanitize: bool,
     pub target_triple: Option<String>,
+    pub platform: Option<String>,
 }
 
 // ── build_project ───────────────────────────────────────────────────
@@ -266,6 +267,7 @@ pub fn build_project(
     opts.use_llvm = config.use_llvm;
     opts.sanitize = config.sanitize;
     opts.target_triple = config.target_triple.clone();
+    opts.platform = config.platform.clone();
     // Project paths = root + manifest includes (project code that should show warnings).
     // Library dep paths from ~/.mx/lib/ are excluded.
     {
@@ -376,7 +378,12 @@ pub fn build_project(
     };
     new_state.save(root)?;
 
-    if config.verbose {
+    // Embedded targets print their own output message from the backend.
+    let is_embedded = config.platform.as_ref()
+        .and_then(|s| crate::platform::Platform::from_str(s))
+        .map(|p| crate::platform::PlatformProfile::from_platform(p).is_embedded())
+        .unwrap_or(false);
+    if !is_embedded {
         eprintln!("{}: built {}", identity::COMPILER_NAME, artifact.display());
     }
 

@@ -614,8 +614,182 @@ fn register_condition(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         Some("Destroy and free the condition variable `c`."));
 }
 
-/// Generate C runtime support code for stdlib modules
+/// Generate C runtime support code for stdlib modules (host platform).
 pub fn generate_runtime_header() -> String {
+    generate_host_runtime_header()
+}
+
+/// Generate the host runtime header.  Target backends call this and
+/// then patch it for their platform via `patch_runtime_header`.
+pub fn generate_host_runtime_header() -> String {
+    generate_host_runtime()
+}
+
+
+fn generate_embedded_runtime(platform: &crate::platform::PlatformProfile) -> String {
+    use crate::platform::{Platform, IoModel};
+    let mut o = String::new();
+
+    o += &format!("/* Modula-2 Runtime Support ({}) */\n", platform.platform);
+    o += "#include <stdio.h>\n";      // ESP-IDF newlib provides this (UART I/O)
+    o += "#include <stdlib.h>\n";
+    o += "#include <string.h>\n";
+    o += "#include <math.h>\n";
+    o += "#include <stdint.h>\n";
+    o += "#include <ctype.h>\n";
+    o += "#include <limits.h>\n";
+    o += "#include <float.h>\n";
+    if platform.has_setjmp {
+        o += "#include <setjmp.h>\n";
+    }
+    if platform.platform == Platform::EspIdf {
+        o += "#include \"esp_log.h\"\n";
+        o += "#define MX_LOG_TAG \"mx\"\n";
+    }
+    o += "\n";
+
+    // Stack trace support (no TLS on embedded)
+    o += "typedef struct m2_StackFrame {\n";
+    o += "    struct m2_StackFrame *prev;\n";
+    o += "    const char *proc_name;\n";
+    o += "    const char *file;\n";
+    o += "    int line;\n";
+    o += "} m2_StackFrame;\n\n";
+    o += "static m2_StackFrame *m2_frame_stack = NULL;\n\n";
+    o += "static void m2_stack_push(m2_StackFrame *frame, const char *proc, const char *file) {\n";
+    o += "    frame->prev = m2_frame_stack;\n";
+    o += "    frame->proc_name = proc;\n";
+    o += "    frame->file = file;\n";
+    o += "    frame->line = 0;\n";
+    o += "    m2_frame_stack = frame;\n";
+    o += "}\n";
+    o += "static void m2_stack_pop(m2_StackFrame *frame) {\n";
+    o += "    m2_frame_stack = frame->prev;\n";
+    o += "}\n";
+    o += "static void m2_print_stack_trace(void) { (void)m2_frame_stack; }\n\n";
+
+    // Exception handling
+    if platform.has_setjmp {
+        o += "static jmp_buf m2_exception_buf;\n";
+        o += "static int m2_exception_code = 0;\n";
+        o += "static int m2_exception_active = 0;\n\n";
+        o += "typedef struct m2_ExcFrame {\n";
+        o += "    jmp_buf buf;\n";
+        o += "    struct m2_ExcFrame *prev;\n";
+        o += "    int exception_id;\n";
+        o += "    const char *exception_name;\n";
+        o += "    void *exception_arg;\n";
+        o += "} m2_ExcFrame;\n\n";
+        o += "static m2_ExcFrame *m2_exc_stack = NULL;\n\n";
+        o += "#define M2_TRY(frame) \\\n";
+        o += "    (frame).prev = m2_exc_stack; \\\n";
+        o += "    (frame).exception_id = 0; \\\n";
+        o += "    (frame).exception_name = NULL; \\\n";
+        o += "    (frame).exception_arg = NULL; \\\n";
+        o += "    m2_exc_stack = &(frame); \\\n";
+        o += "    if (setjmp((frame).buf) == 0)\n\n";
+        o += "#define M2_CATCH else\n\n";
+        o += "#define M2_ENDTRY(frame) \\\n";
+        o += "    m2_exc_stack = (frame).prev\n\n";
+        o += "static void m2_exc_push(m2_ExcFrame *frame) {\n";
+        o += "    frame->prev = m2_exc_stack;\n";
+        o += "    frame->exception_id = 0;\n";
+        o += "    frame->exception_name = NULL;\n";
+        o += "    frame->exception_arg = NULL;\n";
+        o += "    m2_exc_stack = frame;\n";
+        o += "}\n";
+        o += "static void m2_exc_pop(m2_ExcFrame *frame) { m2_exc_stack = frame->prev; }\n";
+        o += "static int m2_exc_get_id(m2_ExcFrame *frame) { return frame->exception_id; }\n";
+        o += "static void m2_exc_reraise(m2_ExcFrame *frame);\n\n";
+        o += "static inline void m2_raise(int id, const char *name, void *arg) {\n";
+        o += "    if (m2_exc_stack) {\n";
+        o += "        m2_exc_stack->exception_id = id;\n";
+        o += "        m2_exc_stack->exception_name = name;\n";
+        o += "        m2_exc_stack->exception_arg = arg;\n";
+        o += "        longjmp(m2_exc_stack->buf, id ? id : 1);\n";
+        o += "    }\n";
+        o += "    if (m2_exception_active) {\n";
+        o += "        m2_exception_code = id ? id : 1;\n";
+        o += "        longjmp(m2_exception_buf, m2_exception_code);\n";
+        o += "    }\n";
+        o += "    abort();\n";
+        o += "}\n";
+        o += "static void m2_exc_reraise(m2_ExcFrame *frame) {\n";
+        o += "    m2_raise(frame->exception_id, frame->exception_name, frame->exception_arg);\n";
+        o += "}\n\n";
+    } else {
+        o += "static inline void m2_raise(int id, const char *name, void *arg) { (void)id; (void)name; (void)arg; abort(); }\n\n";
+    }
+
+    o += "static void m2_halt(void) { abort(); }\n\n";
+
+    // RTTI
+    o += "typedef struct M2_TypeDesc {\n";
+    o += "    uint32_t type_id;\n";
+    o += "    const char *type_name;\n";
+    o += "    struct M2_TypeDesc *parent;\n";
+    o += "    uint32_t depth;\n";
+    o += "} M2_TypeDesc;\n\n";
+    o += "typedef struct M2_RefHeader { M2_TypeDesc *td; } M2_RefHeader;\n";
+    o += "#define M2_REFHEADER_MAGIC 0x4D325246u\n\n";
+
+    // Memory
+    o += "static void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }\n";
+    o += "static void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }\n\n";
+
+    // I/O -- same as host (stdio available via newlib on ESP-IDF).
+    // InOut.mod calls putchar/getchar through CIO, which newlib provides.
+    // These m2_* stubs are fallbacks for simple programs that don't import InOut.
+    o += "/* I/O (fallback stubs -- InOut.mod provides the real implementation) */\n";
+    o += "static int m2_InOut_Done = 1;\n";
+    o += "static void m2_WriteString(const char *s) { printf(\"%s\", s); }\n";
+    o += "static void m2_WriteLn(void) { printf(\"\\n\"); }\n";
+    o += "static void m2_WriteInt(int32_t n, int32_t w) { printf(\"%*d\", (int)w, (int)n); }\n";
+    o += "static void m2_WriteCard(uint32_t n, int32_t w) { printf(\"%*u\", (int)w, (unsigned)n); }\n";
+    o += "static void m2_WriteHex(uint32_t n, int32_t w) { printf(\"%*X\", (int)w, (unsigned)n); }\n";
+    o += "static void m2_WriteOct(uint32_t n, int32_t w) { printf(\"%*o\", (int)w, (unsigned)n); }\n";
+    o += "static void m2_Write(char ch) { putchar(ch); }\n";
+    o += "static void m2_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\\0' : (char)c; m2_InOut_Done = (c != EOF); }\n";
+    o += "static void m2_ReadString(char *s) { m2_InOut_Done = (scanf(\"%s\", s) == 1); }\n";
+    o += "static void m2_ReadInt(int32_t *n) { m2_InOut_Done = (scanf(\"%d\", n) == 1); }\n";
+    o += "static void m2_ReadCard(uint32_t *n) { m2_InOut_Done = (scanf(\"%u\", n) == 1); }\n\n";
+
+    // Strings module
+    o += "static void m2_Assign(const char *src, uint32_t srcHigh, char *dst, uint32_t dstHigh) {\n";
+    o += "    uint32_t srcLen = 0, cpLen;\n";
+    o += "    while (srcLen <= srcHigh && src[srcLen] != '\\0') srcLen++;\n";
+    o += "    cpLen = srcLen; if (cpLen > dstHigh + 1) cpLen = dstHigh + 1;\n";
+    o += "    if (cpLen > 0) memcpy(dst, src, cpLen);\n";
+    o += "    if (cpLen <= dstHigh) dst[cpLen] = '\\0';\n";
+    o += "}\n\n";
+
+    // Bit operations (BXOR, BAND, BOR, BNOT, BSHL, BSHR)
+    o += "static inline uint32_t m2_bxor(uint32_t a, uint32_t b) { return a ^ b; }\n";
+    o += "static inline uint32_t m2_band(uint32_t a, uint32_t b) { return a & b; }\n";
+    o += "static inline uint32_t m2_bor(uint32_t a, uint32_t b)  { return a | b; }\n";
+    o += "static inline uint32_t m2_bnot(uint32_t a)             { return ~a; }\n";
+    o += "static inline uint32_t m2_bshl(uint32_t a, uint32_t n) { return a << n; }\n";
+    o += "static inline uint32_t m2_bshr(uint32_t a, uint32_t n) { return a >> n; }\n";
+    o += "static inline uint32_t m2_rotate(uint32_t val, int32_t n) {\n";
+    o += "    n = n % 32; if (n < 0) n += 32; if (n == 0) return val;\n";
+    o += "    return (val << n) | (val >> (32 - n));\n";
+    o += "}\n\n";
+
+    // RealInOut (stubs for embedded)
+    o += "static int m2_RealInOut_Done = 0;\n";
+    o += "static void m2_ReadReal(float *r) { *r = 0.0f; m2_RealInOut_Done = 0; }\n";
+    o += "static void m2_WriteReal(float r, int32_t w) { (void)r; (void)w; }\n";
+    o += "static void m2_WriteFixPt(float r, int32_t w, int32_t d) { (void)r; (void)w; (void)d; }\n";
+    o += "static void m2_WriteRealOct(float r) { (void)r; }\n\n";
+
+    // Math (still available via soft-float or hardware)
+    o += "static float m2_Random(void) { return 0.0f; }\n";
+    o += "static void m2_Randomize(uint32_t seed) { (void)seed; }\n\n";
+
+    o
+}
+
+fn generate_host_runtime() -> String {
     r#"/* Modula-2 Runtime Support */
 #include <stdio.h>
 #include <stdlib.h>
@@ -1046,8 +1220,8 @@ static void m2_WriteOct(uint32_t n, int32_t w) { printf("%*o", (int)w, (unsigned
 static void m2_Write(char ch) { putchar(ch); }
 static void m2_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\0' : (char)c; m2_InOut_Done = (c != EOF); }
 static void m2_ReadString(char *s) { m2_InOut_Done = (scanf("%s", s) == 1); }
-static void m2_ReadInt(int32_t *n) { m2_InOut_Done = (scanf("%d", n) == 1); }
-static void m2_ReadCard(uint32_t *n) { m2_InOut_Done = (scanf("%u", n) == 1); }
+static void m2_ReadInt(int32_t *n) { int _t; m2_InOut_Done = (scanf("%d", &_t) == 1); *n = (int32_t)_t; }
+static void m2_ReadCard(uint32_t *n) { unsigned _t; m2_InOut_Done = (scanf("%u", &_t) == 1); *n = (uint32_t)_t; }
 
 static FILE *m2_InFile = NULL;
 static FILE *m2_OutFile = NULL;

@@ -40,14 +40,10 @@ impl CodeGen {
             self.gen_proc_by_name(name);
         }
 
-        // Generate main function
-        // (FINALLY is folded into init_cfg via synthetic TRY — no atexit needed)
-        self.emitln("int main(int _m2_argc, char **_m2_argv) {");
+        // Generate entry point via target backend
+        let entry = self.backend.emit_entry_open(self.debug_mode);
+        self.emit(&entry.init_open);
         self.indent += 1;
-        self.emitln("m2_argc = _m2_argc; m2_argv = _m2_argv;");
-        if self.debug_mode {
-            self.emitln("setvbuf(stdout, NULL, _IONBF, 0);");
-        }
 
         // Call embedded module init functions (in dependency order)
         for mod_name in &self.embedded_init_modules.clone() {
@@ -63,18 +59,31 @@ impl CodeGen {
             self.emit_cfg_body(cfg);
         }
 
+        if let Some(ref body_open) = entry.body_open {
+            self.indent -= 1;
+            self.emit(body_open);
+            self.indent += 1;
+        }
+
         self.in_module_body = true;
-        // Module init body from CFG (except/finally already folded in)
         let init_cfg = self.prebuilt_hir.as_ref().and_then(|h| h.init_cfg.clone());
         if let Some(ref cfg) = init_cfg {
-            self.emit_cfg_body_with_return(cfg, "0");
+            if self.backend.entry_returns_value() {
+                self.emit_cfg_body_with_return(cfg, "0");
+            } else {
+                self.emit_cfg_body(cfg);
+            }
         }
         self.in_module_body = false;
-        if init_cfg.is_none() {
+        if self.backend.entry_returns_value() && init_cfg.is_none() {
             self.emitln("return 0;");
         }
         self.indent -= 1;
-        self.emitln("}");
+        self.emit(&entry.close);
+        let epilogue = self.backend.c_epilogue();
+        if !epilogue.is_empty() {
+            self.emit(&epilogue);
+        }
         if self.multi_tu {
             self.emit("/* MX_MAIN_END */\n");
         }

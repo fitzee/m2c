@@ -187,6 +187,7 @@ impl LspServer {
                 feature_cc: std::collections::HashMap::new(),
                 test: workspace::TestSection::default(),
                 backend: None,
+                platform: None,
             },
             lockfile: None,
             include_paths: ctx.include_paths.clone(),

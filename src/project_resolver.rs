@@ -58,6 +58,8 @@ pub struct Manifest {
     pub test: TestSection,
     /// Backend: "c" (default) or "llvm"
     pub backend: Option<String>,
+    /// Platform: "host" (default), "esp-idf", etc.
+    pub platform: Option<String>,
 }
 
 impl Manifest {
@@ -134,6 +136,7 @@ impl Manifest {
         let mut entry = String::new();
         let mut m2plus = false;
         let mut backend: Option<String> = None;
+        let mut platform: Option<String> = None;
         let mut includes = Vec::new();
         let mut deps = Vec::new();
         let mut cc = CcSection::default();
@@ -192,6 +195,7 @@ impl Manifest {
                         "entry" => entry = val.to_string(),
                         "m2plus" => m2plus = val == "true" || val == "1",
                         "backend" => backend = Some(val.to_string()),
+                        "platform" => platform = Some(val.to_string()),
                         "includes" => {
                             includes = val.split_whitespace().map(|s| s.to_string()).collect();
                         }
@@ -245,7 +249,7 @@ impl Manifest {
             return None;
         }
 
-        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, feature_cc, test, backend })
+        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, feature_cc, test, backend, platform })
     }
 }
 

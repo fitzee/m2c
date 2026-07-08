@@ -71,6 +71,7 @@ pub struct CodeGen {
     indent: usize,
     module_name: String,
     pub(crate) target: crate::target::TargetInfo,
+    pub(crate) backend: Box<dyn crate::targets::TargetBackend>,
     pub(crate) sema: SemanticAnalyzer,
     /// Maps imported name (or alias) -> source module for stdlib resolution
     import_map: HashMap<String, String>,
@@ -271,11 +272,13 @@ static C_RESERVED: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 
 impl CodeGen {
     pub fn new(target: crate::target::TargetInfo) -> Self {
+        let backend = crate::targets::backend_for(&target.platform.platform);
         Self {
             output: String::new(),
             indent: 0,
             module_name: String::new(),
             target,
+            backend,
             sema: SemanticAnalyzer::new(),
             import_map: HashMap::new(),
             import_alias_map: HashMap::new(),
@@ -569,13 +572,19 @@ impl CodeGen {
     }
 
     fn post_sema_generate_internal(&mut self, kind: ModuleKind) -> CompileResult<()> {
+        // Platform-specific preamble (e.g. diagnostic suppression for embedded).
+        let preamble = self.backend.c_preamble();
+        if !preamble.is_empty() {
+            self.emit(&preamble);
+        }
         if self.m2plus {
             self.scan_m2plus_features();
             if self.uses_gc { self.emit("#define M2_USE_GC 1\n"); }
             if self.uses_threads { self.emit("#define M2_USE_THREADS 1\n"); }
         }
         if self.multi_tu { self.emit("/* MX_HEADER_BEGIN */\n"); }
-        self.emit(&stdlib::generate_runtime_header());
+        let host_header = stdlib::generate_host_runtime_header();
+        self.emit(&self.backend.patch_runtime_header(&host_header));
         self.emit(&crate::target::emit_c_layout_guards(&self.target));
         if self.multi_tu { self.emit("/* MX_HEADER_END */\n"); }
 
