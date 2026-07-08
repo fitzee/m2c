@@ -36,6 +36,12 @@ DEFINITION MODULE FOR "C" SocketsBridge;
                              join: INTEGER): INTEGER;
   PROCEDURE m2_set_broadcast(fd: INTEGER; enable: INTEGER): INTEGER;
 
+  (* Unix domain sockets *)
+  PROCEDURE m2_bind_unix(fd: INTEGER; path: ADDRESS): INTEGER;
+  PROCEDURE m2_connect_unix(fd: INTEGER; path: ADDRESS): INTEGER;
+  PROCEDURE m2_accept_unix(fd: INTEGER; VAR outFd: INTEGER): INTEGER;
+  PROCEDURE m2_unlink(path: ADDRESS): INTEGER;
+
   (* Error *)
   PROCEDURE m2_errno(): INTEGER;
   PROCEDURE m2_strerror(errnum: INTEGER; buf: ADDRESS; buflen: INTEGER);

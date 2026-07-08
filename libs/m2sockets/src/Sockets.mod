@@ -5,20 +5,14 @@ FROM SocketsBridge IMPORT
      m2_socket, m2_close, m2_shutdown,
      m2_bind_any, m2_listen, m2_accept,
      m2_connect_host_port,
+     m2_bind_unix, m2_connect_unix, m2_accept_unix, m2_unlink,
      m2_send, m2_recv,
      m2_sendto, m2_recvfrom,
      m2_set_multicast, m2_set_broadcast,
      m2_set_nonblocking, m2_set_reuseaddr,
      m2_errno, m2_strerror;
 
-(* ── Errno constants (POSIX, portable Linux/macOS) ──── *)
-
-CONST
-  EAGAIN      = 35;   (* macOS; Linux = 11 — handled below *)
-  EWOULDBLOCK = 35;   (* macOS; Linux = 11 *)
-  ECONNRESET  = 54;   (* macOS; Linux = 104 *)
-
-(* We don't hard-code errno values; we check the bridge at runtime. *)
+(* Errno values checked at runtime via m2_errno(), not hard-coded. *)
 
 (* ── Internal: map bridge return + errno to Status ──── *)
 
@@ -37,7 +31,9 @@ PROCEDURE SocketCreate(family, socktype: INTEGER;
                        VAR out: Socket): Status;
 VAR fd: INTEGER;
 BEGIN
-  IF (family # AF_INET) THEN out := InvalidSocket; RETURN Invalid END;
+  IF (family # AF_INET) AND (family # AF_UNIX) THEN
+    out := InvalidSocket; RETURN Invalid
+  END;
   IF (socktype # SOCK_STREAM) AND (socktype # SOCK_DGRAM) THEN
     out := InvalidSocket; RETURN Invalid
   END;
@@ -118,6 +114,42 @@ BEGIN
   END;
   RETURN OK
 END Connect;
+
+(* ── Unix domain sockets ────────────────────────────── *)
+
+PROCEDURE BindUnix(s: Socket; path: ARRAY OF CHAR): Status;
+BEGIN
+  IF s = InvalidSocket THEN RETURN Invalid END;
+  IF m2_bind_unix(s, ADR(path)) < 0 THEN RETURN MapError() END;
+  RETURN OK
+END BindUnix;
+
+PROCEDURE ConnectUnix(s: Socket; path: ARRAY OF CHAR): Status;
+BEGIN
+  IF s = InvalidSocket THEN RETURN Invalid END;
+  IF m2_connect_unix(s, ADR(path)) < 0 THEN RETURN MapError() END;
+  RETURN OK
+END ConnectUnix;
+
+PROCEDURE AcceptUnix(s: Socket; VAR outClient: Socket): Status;
+VAR fd: INTEGER; rc: INTEGER;
+BEGIN
+  IF s = InvalidSocket THEN
+    outClient := InvalidSocket; RETURN Invalid
+  END;
+  rc := m2_accept_unix(s, fd);
+  IF rc < 0 THEN
+    outClient := InvalidSocket; RETURN MapError()
+  END;
+  outClient := fd;
+  RETURN OK
+END AcceptUnix;
+
+PROCEDURE UnlinkPath(path: ARRAY OF CHAR): Status;
+BEGIN
+  IF m2_unlink(ADR(path)) < 0 THEN RETURN MapError() END;
+  RETURN OK
+END UnlinkPath;
 
 (* ── I/O ────────────────────────────────────────────── *)
 

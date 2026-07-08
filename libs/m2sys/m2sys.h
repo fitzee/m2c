@@ -90,4 +90,7 @@ int32_t m2sys_write_byte(int fd);
 int32_t m2sys_read_byte(int fd);
 int32_t m2sys_set_nonblock(int fd);
 
+/* High-resolution monotonic timer (microseconds) */
+int64_t m2sys_usec(void);
+
 #endif

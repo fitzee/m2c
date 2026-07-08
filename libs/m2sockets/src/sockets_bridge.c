@@ -18,6 +18,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <sys/un.h>
 
 /* ── Lifecycle ──────────────────────────────────────────── */
 
@@ -214,6 +215,41 @@ int32_t m2_set_broadcast(int32_t fd, int32_t enable)
     int val = enable ? 1 : 0;
     return setsockopt(fd, SOL_SOCKET, SO_BROADCAST,
                       &val, sizeof(val)) == 0 ? 0 : -1;
+}
+
+/* ── Unix domain sockets ───────────────────────────────── */
+
+int32_t m2_bind_unix(int32_t fd, const char *path)
+{
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    strncpy(sa.sun_path, path, sizeof(sa.sun_path) - 1);
+    return bind(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 ? 0 : -1;
+}
+
+int32_t m2_connect_unix(int32_t fd, const char *path)
+{
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    strncpy(sa.sun_path, path, sizeof(sa.sun_path) - 1);
+    return connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 ? 0 : -1;
+}
+
+int32_t m2_accept_unix(int32_t fd, int32_t *out_fd)
+{
+    struct sockaddr_un sa;
+    socklen_t len = sizeof(sa);
+    int cfd = accept(fd, (struct sockaddr *)&sa, &len);
+    if (cfd < 0) return -1;
+    *out_fd = (int32_t)cfd;
+    return 0;
+}
+
+int32_t m2_unlink(const char *path)
+{
+    return unlink(path) == 0 ? 0 : -1;
 }
 
 /* ── Error ──────────────────────────────────────────────── */

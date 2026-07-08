@@ -37,6 +37,12 @@ int32_t m2_recvfrom(int32_t fd, void *buf, int32_t maxlen,
 int32_t m2_set_multicast(int32_t fd, const char *group, int32_t join);
 int32_t m2_set_broadcast(int32_t fd, int32_t enable);
 
+/* Unix domain sockets */
+int32_t m2_bind_unix(int32_t fd, const char *path);
+int32_t m2_connect_unix(int32_t fd, const char *path);
+int32_t m2_accept_unix(int32_t fd, int32_t *out_fd);
+int32_t m2_unlink(const char *path);
+
 /* Error */
 int32_t m2_errno(void);
 void    m2_strerror(int32_t errnum, void *buf, int32_t buflen);

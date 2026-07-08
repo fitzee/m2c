@@ -366,8 +366,10 @@ IMPLEMENTATION MODULE Http2Server;
         RETURN;
       END;
 
-      (* Non-blocking TLS handshake — socket stays non-blocking.
-         macOS inherits O_NONBLOCK from the listen socket. *)
+      (* Non-blocking TLS handshake.
+         On Linux, accepted sockets do NOT inherit O_NONBLOCK from
+         the listen socket (unlike macOS), so we must set it explicitly. *)
+      SetNonBlocking(clientFd, TRUE);
       sched := GetScheduler(sp^.loop);
       tlsSt := SessionCreateServer(sp^.loop, sched,
                                    sp^.tlsCtx, INTEGER(clientFd),

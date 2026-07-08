@@ -1,6 +1,6 @@
 # Sockets
 
-TCP and UDP networking over POSIX/BSD system calls via a thin C bridge (`sockets_bridge.c`). All procedures return a `Status` value indicating success or the category of failure. Sockets are blocking by default; call `SetNonBlocking` to enable non-blocking I/O. Targets Linux and macOS.
+TCP, UDP, and Unix domain socket networking over POSIX/BSD system calls via a thin C bridge (`sockets_bridge.c`). All procedures return a `Status` value indicating success or the category of failure. Sockets are blocking by default; call `SetNonBlocking` to enable non-blocking I/O. Targets Linux and macOS.
 
 ## Types
 
@@ -29,6 +29,7 @@ TCP and UDP networking over POSIX/BSD system calls via a thin C bridge (`sockets
 | Constant        | Value | Description                           |
 |-----------------|-------|---------------------------------------|
 | `InvalidSocket` | -1    | Sentinel for "no socket"              |
+| `AF_UNIX`       | 1     | Unix domain socket address family     |
 | `AF_INET`       | 2     | IPv4 address family                   |
 | `SOCK_STREAM`   | 1     | TCP (stream) socket type              |
 | `SOCK_DGRAM`    | 2     | UDP (datagram) socket type            |
@@ -45,7 +46,7 @@ PROCEDURE SocketCreate(family, socktype: INTEGER;
                        VAR out: Socket): Status;
 ```
 
-Creates a new socket. `family` must be `AF_INET`; `socktype` must be `SOCK_STREAM` or `SOCK_DGRAM`. On success, `out` receives a valid file descriptor. On failure, `out` is set to `InvalidSocket` and the return value is `Invalid` (bad arguments) or `SysError` (OS error).
+Creates a new socket. `family` must be `AF_UNIX` or `AF_INET`; `socktype` must be `SOCK_STREAM` or `SOCK_DGRAM`. On success, `out` receives a valid file descriptor. On failure, `out` is set to `InvalidSocket` and the return value is `Invalid` (bad arguments) or `SysError` (OS error).
 
 ```modula2
 st := SocketCreate(AF_INET, SOCK_STREAM, sock);
@@ -126,6 +127,53 @@ Resolves `host` (either a hostname like `"example.com"` or a dotted-quad like `"
 ```modula2
 st := Connect(sock, "localhost", 8080);
 ```
+
+## Unix Domain Sockets
+
+For local IPC without TCP overhead. Create a socket with `AF_UNIX` + `SOCK_STREAM`, then use `BindUnix`/`AcceptUnix` on the server side and `ConnectUnix` on the client side. The regular `SendString`, `RecvLine`, `SendBytes`, and `RecvBytes` procedures work the same way once connected.
+
+### BindUnix
+
+```modula2
+PROCEDURE BindUnix(s: Socket; path: ARRAY OF CHAR): Status;
+```
+
+Bind a socket to a filesystem path. The socket file is created at `path`. Remove any stale socket file before calling this (see `UnlinkPath`). Returns `Invalid` if `s` is `InvalidSocket`; `SysError` on OS failure.
+
+```modula2
+st := UnlinkPath("/tmp/myapp.sock");   (* remove stale file *)
+st := BindUnix(sock, "/tmp/myapp.sock");
+st := Listen(sock, 8);
+```
+
+### ConnectUnix
+
+```modula2
+PROCEDURE ConnectUnix(s: Socket; path: ARRAY OF CHAR): Status;
+```
+
+Connect to a Unix domain socket at `path`. The socket must have been created with `AF_UNIX` + `SOCK_STREAM`.
+
+```modula2
+st := SocketCreate(AF_UNIX, SOCK_STREAM, sock);
+st := ConnectUnix(sock, "/tmp/myapp.sock");
+```
+
+### AcceptUnix
+
+```modula2
+PROCEDURE AcceptUnix(s: Socket; VAR outClient: Socket): Status;
+```
+
+Accept a connection on a Unix domain socket. Like `Accept` but without a peer address (Unix sockets don't have one). Blocks until a client connects.
+
+### UnlinkPath
+
+```modula2
+PROCEDURE UnlinkPath(path: ARRAY OF CHAR): Status;
+```
+
+Remove a file from the filesystem. Intended for cleaning up stale socket files before `BindUnix`. Returns `SysError` if the file doesn't exist or can't be removed.
 
 ## I/O
 

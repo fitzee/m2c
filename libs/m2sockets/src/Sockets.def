@@ -27,6 +27,7 @@ DEFINITION MODULE Sockets;
     InvalidSocket = -1;
 
     (* Address families *)
+    AF_UNIX      = 1;
     AF_INET      = 2;
 
     (* Socket types *)
@@ -78,6 +79,24 @@ DEFINITION MODULE Sockets;
   PROCEDURE Connect(s: Socket;
                     host: ARRAY OF CHAR;
                     port: CARDINAL): Status;
+
+  (* ── Unix domain sockets ─────────────────────────────── *)
+
+  (* Bind a socket to a filesystem path (AF_UNIX).
+     Pre:  s was created with AF_UNIX + SOCK_STREAM.
+     Post: socket file exists at path on OK. *)
+  PROCEDURE BindUnix(s: Socket; path: ARRAY OF CHAR): Status;
+
+  (* Connect to a Unix domain socket at path.
+     Pre:  s was created with AF_UNIX + SOCK_STREAM.
+     Post: connected on OK. *)
+  PROCEDURE ConnectUnix(s: Socket; path: ARRAY OF CHAR): Status;
+
+  (* Accept on a Unix domain socket.  No peer address. *)
+  PROCEDURE AcceptUnix(s: Socket; VAR outClient: Socket): Status;
+
+  (* Remove a socket file from the filesystem. *)
+  PROCEDURE UnlinkPath(path: ARRAY OF CHAR): Status;
 
   (* ── I/O (blocking by default) ──────────────────────── *)
 

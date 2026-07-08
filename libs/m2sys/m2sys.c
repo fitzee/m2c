@@ -5,8 +5,11 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
-#ifndef __APPLE__
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#else
 #include <sys/syscall.h>
+#include <time.h>
 #endif
 
 /* ── File handle table ─────────────────────────────────────────── */
@@ -497,6 +500,24 @@ int64_t m2sys_thread_id(void) {
     return (int64_t)tid;
 #else
     return (int64_t)syscall(SYS_gettid);
+#endif
+}
+
+/* ── High-resolution monotonic timer ─────────────────────────────── */
+
+int64_t m2sys_usec(void) {
+#ifdef __APPLE__
+    /* mach_absolute_time is nanosecond-scale on Apple Silicon,
+       ~1ns on Intel.  Convert to microseconds. */
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    uint64_t t = mach_absolute_time();
+    uint64_t ns = t * tb.numer / tb.denom;
+    return (int64_t)(ns / 1000);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000LL + (int64_t)(ts.tv_nsec / 1000);
 #endif
 }
 
