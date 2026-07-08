@@ -1,8 +1,8 @@
 # mx — Modula-2 Compiler
 
-![version](https://img.shields.io/badge/version-1.10.6-blue)
+![version](https://img.shields.io/badge/version-1.11.0-blue)
 ![language](https://img.shields.io/badge/language-Rust-orange)
-![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)
+![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20ESP32-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![PIM4](https://img.shields.io/badge/Modula--2-PIM4-blueviolet)
 

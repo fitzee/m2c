@@ -1,5 +1,25 @@
 # Release Notes
 
+## 1.11.0 (2026-07-08)
+
+### Features
+
+- **ESP-IDF platform support** — new `--platform esp-idf` flag cross-compiles Modula-2 programs for ESP32. Generates a complete ESP-IDF project (CMakeLists, component, sdkconfig) from `mx build`. Supports Xtensa and RISC-V ESP32 variants.
+- **Target backend abstraction** — platform-specific codegen consolidated into a `TargetBackend` trait (`src/targets/`). Adding a new embedded platform means adding one file, not touching codegen or driver.
+- **ILP32 data model** — 32-bit integer/pointer layout for embedded targets.
+
+### Bug fixes
+
+- **C backend: type alias struct duplication** — type aliases to record types now emit `typedef` instead of duplicating the struct definition, which caused incompatible types at call sites.
+- **LLVM backend: MAX/MIN for unsigned types** — fixed incorrect codegen for MAX/MIN with CARDINAL/LONGCARD operands. Fixed TypeTransfer+Deref combination.
+- **Sema: TSIZE/SIZE in constant expressions** — TSIZE and SIZE now evaluate correctly when used in constant declarations and array bounds.
+
+### Libraries
+
+- **m2sockets 0.2.0** — add Unix domain socket support: AF_UNIX, BindUnix, ConnectUnix, ListenUnix.
+- **m2sys 0.4.0** — add m2sys_unlink, m2sys_getcwd, m2sys_chdir, m2sys_mkdir, m2sys_rmdir.
+- **m2http2server 0.2.3** — set O_NONBLOCK on accepted sockets explicitly (Linux does not inherit from listen socket).
+
 ## 1.10.6 (2026-06-23)
 
 ### Bug fixes
